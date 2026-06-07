@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CacheLite — an in-memory cache engine, built from scratch</title>
+<meta name="description" content="A zero-dependency, thread-safe in-memory cache engine in pure Python. LRU/LFU/FIFO/Random eviction, TTL expiry, snapshots, an HTTP API and a CLI — follow a request through every stage." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --paper: oklch(20% 0.022 200);
+  --paper-2: oklch(24% 0.028 200);
+  --paper-3: oklch(28% 0.032 200);
+  --ink: oklch(95% 0.012 200);
+  --ink-soft: oklch(78% 0.018 200);
+  --ink-faint: oklch(60% 0.020 200);
+  --accent: oklch(78% 0.15 190);
+  --accent-2: oklch(70% 0.13 165);
+  --line: oklch(34% 0.028 200);
+  --font-display:"Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body:"Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:"Geist Mono", ui-monospace, monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--font-body);
+  font-weight:300;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+a{color:inherit;text-decoration:none}
+
+/* ---- top bar ---- */
+.top{display:flex;justify-content:space-between;align-items:center;padding:26px 0;border-bottom:1px solid var(--line)}
+.brand{font-family:var(--font-mono);font-weight:500;font-size:.92rem;letter-spacing:.02em;display:flex;align-items:center;gap:10px}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 14px var(--accent)}
+.top nav{display:flex;gap:26px;font-family:var(--font-mono);font-size:.78rem;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em}
+.top nav a:hover{color:var(--accent)}
+@media(max-width:680px){.top nav{display:none}}
+
+/* ---- hero ---- */
+.hero{padding:96px 0 70px;position:relative}
+.kicker{font-family:var(--font-mono);font-size:.8rem;color:var(--accent);letter-spacing:.14em;text-transform:uppercase;margin-bottom:26px}
+.stages-line{font-family:var(--font-mono);font-size:clamp(1.05rem,2.4vw,1.5rem);color:var(--ink-soft);letter-spacing:.01em;margin-bottom:34px}
+.stages-line b{color:var(--accent);font-weight:500}
+h1{font-family:var(--font-display);font-weight:700;font-size:clamp(2.7rem,7vw,5.4rem);line-height:1.02;letter-spacing:-.025em;max-width:14ch}
+h1 em{font-style:normal;color:var(--accent)}
+.lede{margin-top:30px;font-size:clamp(1.05rem,1.6vw,1.28rem);max-width:60ch;color:var(--ink-soft);font-weight:300}
+.cta{margin-top:42px;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.btn{font-family:var(--font-mono);font-size:.86rem;padding:14px 24px;border-radius:2px;border:1px solid var(--accent);background:var(--accent);color:oklch(20% 0.04 200);font-weight:500;transition:.18s;letter-spacing:.02em}
+.btn:hover{background:transparent;color:var(--accent)}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn.ghost:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---- meta strip ---- */
+.metastrip{display:flex;flex-wrap:wrap;gap:36px;padding:34px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:64px}
+.metastrip .m{display:flex;flex-direction:column;gap:4px}
+.metastrip .m b{font-family:var(--font-display);font-size:1.9rem;font-weight:600;color:var(--ink)}
+.metastrip .m span{font-family:var(--font-mono);font-size:.74rem;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em}
+
+/* ---- stage sections ---- */
+.stage{padding:78px 0;border-bottom:1px solid var(--line);position:relative}
+.stage-head{display:flex;align-items:baseline;gap:22px;margin-bottom:18px;flex-wrap:wrap}
+.stage-num{font-family:var(--font-mono);font-size:1.05rem;color:var(--accent);font-weight:500;border:1px solid var(--accent);border-radius:2px;padding:4px 12px}
+.stage-name{font-family:var(--font-display);font-size:clamp(1.7rem,4vw,2.8rem);font-weight:600;letter-spacing:-.02em}
+.stage-grid{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start;margin-top:10px}
+@media(max-width:820px){.stage-grid{grid-template-columns:1fr;gap:28px}}
+.stage-copy p{color:var(--ink-soft);font-size:1.06rem;max-width:54ch}
+.stage-copy p + p{margin-top:16px}
+.stage-copy .note{font-family:var(--font-mono);font-size:.82rem;color:var(--accent-2);margin-top:20px;padding-left:16px;border-left:2px solid var(--accent-2)}
+
+/* ---- code blocks ---- */
+.code{background:var(--paper-2);border:1px solid var(--line);border-radius:4px;overflow:hidden;font-family:var(--font-mono);font-size:.85rem;line-height:1.7}
+.code .bar{display:flex;gap:7px;padding:11px 15px;border-bottom:1px solid var(--line);background:var(--paper-3)}
+.code .bar i{width:11px;height:11px;border-radius:50%;display:inline-block;background:var(--line)}
+.code .bar i.r{background:oklch(64% 0.16 25)}
+.code .bar i.y{background:oklch(80% 0.13 90)}
+.code .bar i.g{background:var(--accent-2)}
+.code pre{padding:18px 18px;overflow-x:auto;color:var(--ink-soft)}
+.code .k{color:var(--accent)}
+.code .s{color:var(--accent-2)}
+.code .c{color:var(--ink-faint);font-style:italic}
+.code .n{color:oklch(82% 0.12 90)}
+
+/* ---- policies ---- */
+.policies{padding:78px 0;border-bottom:1px solid var(--line)}
+.section-kicker{font-family:var(--font-mono);font-size:.78rem;color:var(--accent);letter-spacing:.12em;text-transform:uppercase;margin-bottom:14px}
+.section-title{font-family:var(--font-display);font-size:clamp(1.7rem,4vw,2.6rem);font-weight:600;letter-spacing:-.02em;margin-bottom:40px;max-width:18ch}
+.pol-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+@media(max-width:680px){.pol-grid{grid-template-columns:1fr}}
+.pol{background:var(--paper);padding:30px 28px}
+.pol h3{font-family:var(--font-mono);font-size:.95rem;color:var(--accent);margin-bottom:6px;letter-spacing:.02em}
+.pol .struct{font-family:var(--font-mono);font-size:.74rem;color:var(--ink-faint);margin-bottom:14px}
+.pol p{color:var(--ink-soft);font-size:.98rem}
+
+/* ---- feature list ---- */
+.feat{padding:78px 0;border-bottom:1px solid var(--line)}
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:34px 40px}
+@media(max-width:820px){.feat-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.feat-grid{grid-template-columns:1fr}}
+.feat-item{border-top:1px solid var(--line);padding-top:18px}
+.feat-item h4{font-family:var(--font-display);font-size:1.08rem;font-weight:600;margin-bottom:8px}
+.feat-item p{color:var(--ink-faint);font-size:.92rem}
+.feat-item .tag{font-family:var(--font-mono);color:var(--accent);font-size:.78rem}
+
+/* ---- closing ---- */
+.closing{padding:96px 0 80px;text-align:center}
+.closing h2{font-family:var(--font-display);font-size:clamp(2rem,5vw,3.4rem);font-weight:700;letter-spacing:-.025em;max-width:16ch;margin:0 auto 24px}
+.closing p{color:var(--ink-soft);max-width:50ch;margin:0 auto 38px}
+.closing .cta{justify-content:center}
+
+footer{border-top:1px solid var(--line);padding:34px 0;font-family:var(--font-mono);font-size:.78rem;color:var(--ink-faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
+footer a:hover{color:var(--accent)}
+
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .6s ease,transform .6s ease}
+.reveal.in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand"><span class="dot"></span>cachelite</div>
+    <nav>
+      <a href="#flow">flow</a>
+      <a href="#policies">policies</a>
+      <a href="#features">features</a>
+      <a href="https://github.com/hajirufai/cachelite">github</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="kicker">zero-dependency · pure python · in-memory cache engine</div>
+    <div class="stages-line"><b>1.0</b> lookup &nbsp;·&nbsp; <b>2.0</b> store &nbsp;·&nbsp; <b>3.0</b> evict &nbsp;·&nbsp; <b>4.0</b> expire &nbsp;·&nbsp; <b>5.0</b> persist</div>
+    <h1>The cache, <em>traced</em> from request to disk.</h1>
+    <p class="lede">CacheLite is the engine behind Redis, Memcached and Guava — rebuilt from first principles in the Python standard library. Hand-rolled data structures, four eviction policies, TTL expiry, thread safety, snapshots, an HTTP API and a CLI. Nothing imported beyond <code style="font-family:var(--font-mono);color:var(--accent-2)">stdlib</code>.</p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/hajirufai/cachelite">View on GitHub →</a>
+      <a class="btn ghost" href="#flow">Follow a request</a>
+    </div>
+
+    <div class="metastrip">
+      <div class="m"><b>0</b><span>dependencies</span></div>
+      <div class="m"><b>4</b><span>eviction policies</span></div>
+      <div class="m"><b>O(1)</b><span>get · set · evict</span></div>
+      <div class="m"><b>173</b><span>passing tests</span></div>
+      <div class="m"><b>~470K</b><span>gets / second</span></div>
+    </div>
+  </section>
+
+  <a id="flow"></a>
+
+  <!-- STAGE 1 -->
+  <section class="stage reveal">
+    <div class="stage-head"><span class="stage-num">1.0</span><span class="stage-name">LOOKUP</span></div>
+    <div class="stage-grid">
+      <div class="stage-copy">
+        <p>Every request starts with a <code style="font-family:var(--font-mono);color:var(--accent-2)">get</code>. CacheLite checks the hash map, confirms the entry hasn't passed its TTL, bumps its recency/frequency metadata, and hands back the value — all under one lock.</p>
+        <p>A miss and a stored <code style="font-family:var(--font-mono);color:var(--accent-2)">None</code> are different things. The decorator and API both use a sentinel so caching a function that legitimately returns <code style="font-family:var(--font-mono);color:var(--accent-2)">None</code> still works.</p>
+        <p class="note">hit_rate, miss_rate and every counter update on the way through.</p>
+      </div>
+      <div class="code">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+<pre><span class="k">from</span> cachelite <span class="k">import</span> Cache
+
+cache = Cache(max_items=<span class="n">1000</span>, policy=<span class="s">"lru"</span>)
+cache.set(<span class="s">"user:1"</span>, {<span class="s">"name"</span>: <span class="s">"Ada"</span>})
+
+cache.get(<span class="s">"user:1"</span>)   <span class="c"># -> {"name": "Ada"}</span>
+cache.get(<span class="s">"ghost"</span>)    <span class="c"># -> None  (counted as a miss)</span>
+cache.stats().hit_rate <span class="c"># -> 0.5</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- STAGE 2 -->
+  <section class="stage reveal">
+    <div class="stage-head"><span class="stage-num">2.0</span><span class="stage-name">STORE</span></div>
+    <div class="stage-grid">
+      <div class="stage-copy">
+        <p>A <code style="font-family:var(--font-mono);color:var(--accent-2)">set</code> writes the value, records a deep byte-size estimate, and registers the key with the active eviction policy. Give it a TTL inline, or lean on a cache-wide default.</p>
+        <p>The cache is bounded by item count, by memory, or both. Sizes recurse into nested containers — a list of strings reports its real footprint, not just the pointer.</p>
+        <p class="note">TTLs use a monotonic clock, so NTP corrections never expire a key early.</p>
+      </div>
+      <div class="code">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+<pre>cache = Cache(
+    max_items=<span class="n">10_000</span>,
+    max_bytes=<span class="n">8_000_000</span>,   <span class="c"># 8 MB budget too</span>
+    default_ttl=<span class="n">60</span>,
+)
+
+cache.set(<span class="s">"session:42"</span>, payload)        <span class="c"># 60s default</span>
+cache.set(<span class="s">"otp:42"</span>, code, ttl=<span class="n">30</span>)       <span class="c"># per-key</span>
+cache.ttl(<span class="s">"otp:42"</span>)                     <span class="c"># -> ~30.0</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- STAGE 3 -->
+  <section class="stage reveal">
+    <div class="stage-head"><span class="stage-num">3.0</span><span class="stage-name">EVICT</span></div>
+    <div class="stage-grid">
+      <div class="stage-copy">
+        <p>When the cache fills, a policy picks the victim in O(1). No scanning, no sorting — the data structures keep the answer ready. Swap the policy with one string.</p>
+        <p>LRU rides a hand-built doubly-linked list. LFU tracks frequency buckets with a live minimum. FIFO tombstones lazily. Random does swap-remove on an array.</p>
+        <p class="note">Eviction fires an on_evict event, so you can ship the victim somewhere else.</p>
+      </div>
+      <div class="code">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+<pre><span class="k">from</span> cachelite.events <span class="k">import</span> ON_EVICT
+
+cache = Cache(max_items=<span class="n">2</span>, policy=<span class="s">"lfu"</span>)
+cache.events.on(ON_EVICT, <span class="k">lambda</span> k, v: print(<span class="s">"dropped"</span>, k))
+
+cache.set(<span class="s">"a"</span>, <span class="n">1</span>); cache.set(<span class="s">"b"</span>, <span class="n">2</span>)
+cache.get(<span class="s">"a"</span>); cache.get(<span class="s">"a"</span>)   <span class="c"># a is hotter</span>
+cache.set(<span class="s">"c"</span>, <span class="n">3</span>)              <span class="c"># dropped b</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- STAGE 4 -->
+  <section class="stage reveal">
+    <div class="stage-head"><span class="stage-num">4.0</span><span class="stage-name">EXPIRE</span></div>
+    <div class="stage-grid">
+      <div class="stage-copy">
+        <p>Expiry is two-pronged, just like Redis. <b>Lazy</b>: every read checks the deadline and drops the key on the spot — zero overhead for keys nobody touches.</p>
+        <p><b>Active</b>: an optional background thread samples random keys, evicts the dead ones, and sweeps again whenever more than a quarter of a sample was expired. Memory never bloats with stale keys.</p>
+        <p class="note">invalidate("user:*") clears a whole namespace by glob in one call.</p>
+      </div>
+      <div class="code">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+<pre><span class="k">from</span> cachelite.core.config <span class="k">import</span> CacheConfig
+
+cache = Cache(config=CacheConfig(
+    max_items=<span class="n">10_000</span>,
+    active_expiry=<span class="k">True</span>,    <span class="c"># background sweeper</span>
+    sweep_interval=<span class="n">1.0</span>,
+    sweep_sample=<span class="n">20</span>,
+))
+
+cache.invalidate(<span class="s">"user:*"</span>)   <span class="c"># bulk drop -> count</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- STAGE 5 -->
+  <section class="stage reveal">
+    <div class="stage-head"><span class="stage-num">5.0</span><span class="stage-name">PERSIST</span></div>
+    <div class="stage-grid">
+      <div class="stage-copy">
+        <p>Snapshot the live cache to disk as JSON or pickle, then restore it into a fresh process. TTLs are stored as <em>remaining seconds</em>, so deadlines rebuild correctly against the new clock — no expired-on-load surprises.</p>
+        <p>Reach it over HTTP or from the shell. The same engine powers a RESTful server and a file-backed CLI.</p>
+        <p class="note">Corrupt or foreign files raise a clear SnapshotError, never a silent half-load.</p>
+      </div>
+      <div class="code">
+        <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+<pre><span class="c"># in-process</span>
+cache.snapshot(<span class="s">"cache.json"</span>)
+fresh = Cache(max_items=<span class="n">1000</span>)
+fresh.restore(<span class="s">"cache.json"</span>)   <span class="c"># TTLs intact</span>
+
+<span class="c"># or over HTTP</span>
+$ python -m cachelite serve --port <span class="n">8080</span>
+$ curl -X PUT localhost:8080/cache/k -d <span class="s">'{"value":1}'</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- POLICIES -->
+  <a id="policies"></a>
+  <section class="policies reveal">
+    <div class="section-kicker">the engine room</div>
+    <h2 class="section-title">Four policies, every one O(1).</h2>
+    <div class="pol-grid">
+      <div class="pol">
+        <h3>LRU — Least Recently Used</h3>
+        <div class="struct">doubly-linked list + hash map</div>
+        <p>Sentinel head/tail nodes mean no null checks on the hot path. Access moves a node to the front; eviction pops the tail.</p>
+      </div>
+      <div class="pol">
+        <h3>LFU — Least Frequently Used</h3>
+        <div class="struct">frequency buckets + min-freq tracker</div>
+        <p>Three structures cooperate so the least-used key is always one lookup away. Ties break to the oldest entry at that frequency.</p>
+      </div>
+      <div class="pol">
+        <h3>FIFO — First In, First Out</h3>
+        <div class="struct">deque + lazy tombstoning</div>
+        <p>Insertion order in a deque; deletes leave tombstones that eviction skips. Access never reorders anything.</p>
+      </div>
+      <div class="pol">
+        <h3>Random</h3>
+        <div class="struct">swap-remove array + index map</div>
+        <p>Swapping the victim with the last element gives O(1) removal of any key — no shifting, surprisingly competitive in practice.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <a id="features"></a>
+  <section class="feat reveal">
+    <div class="section-kicker">also in the box</div>
+    <h2 class="section-title">Everything a real cache needs.</h2>
+    <div class="feat-grid">
+      <div class="feat-item"><span class="tag">@cached</span><h4>Memoization</h4><p>Decorate any function. TTL, custom keys, None-safe, with cache_clear() and cache_info().</p></div>
+      <div class="feat-item"><span class="tag">threads</span><h4>Reader-writer lock</h4><p>Many concurrent readers or one exclusive writer, plus striped locking to cut contention.</p></div>
+      <div class="feat-item"><span class="tag">stats</span><h4>Live metrics</h4><p>Hits, misses, evictions, expirations, hit rate and memory usage, snapshotted atomically.</p></div>
+      <div class="feat-item"><span class="tag">events</span><h4>Lifecycle hooks</h4><p>on_hit, on_miss, on_evict, on_expire and more. Handlers are isolated — one crash never sinks the cache.</p></div>
+      <div class="feat-item"><span class="tag">http</span><h4>REST API</h4><p>A threaded server on stdlib http.server: GET/PUT/DELETE, /stats, /keys, /invalidate, /flush.</p></div>
+      <div class="feat-item"><span class="tag">cli</span><h4>Command line</h4><p>set, get, keys, stats, flush, serve, demo — file-backed for persistence between calls.</p></div>
+    </div>
+  </section>
+
+  <!-- CLOSING -->
+  <section class="closing reveal">
+    <h2>Read the cache you depend on.</h2>
+    <p>Clone it, run the tests, follow a request through every stage. It's ~1,900 lines of commented Python and a clean reference for how production caches actually work.</p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/hajirufai/cachelite">Start at stage 1 →</a>
+      <a class="btn ghost" href="https://github.com/hajirufai/cachelite#quick-start">Read the docs</a>
+    </div>
+  </section>
+
+  <footer>
+    <span>cachelite · MIT · built by Haji Rufai</span>
+    <span><a href="https://github.com/hajirufai/cachelite">github.com/hajirufai/cachelite</a></span>
+  </footer>
+
+</div>
+<script>
+const io = new IntersectionObserver((entries)=>{
+  entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+},{threshold:.12});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>
